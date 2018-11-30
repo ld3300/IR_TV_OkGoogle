@@ -1,0 +1,2 @@
+command structure to identify valid serial commands from ESP to Circuit playground
+Get IR codes for inputs
