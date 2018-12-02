@@ -1,8 +1,11 @@
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
+#include <Wire.h>
 #include "Adafruit_MQTT.h"
 #include "Adafruit_MQTT_Client.h"
 #include "private.h"
+
+#define SLAVEADDR 8               // Address of I2C Slave
 
 WiFiClient client;
 Adafruit_MQTT_Client mqtt(&client, MQTT_SERV, MQTT_PORT, MQTT_NAME, MQTT_PASS);
@@ -32,6 +35,7 @@ void MQTT_connect() {
 
 void setup(){
   Serial.begin(115200);
+  Wire.begin();
 
   //Connect to WiFi
   Serial.print("\n\nConnecting Wifi...");
@@ -50,19 +54,21 @@ void loop(){
   //Connect/Reconnect to MQTT
   MQTT_connect();
 
-  //Read from our subscription queue until we run out, or
-  //wait up to 5 seconds for subscription to update
+  // Read from our subscription queue until we run out, or
+  // wait up to 5 seconds for subscription to update
   Adafruit_MQTT_Subscribe * subscription;
   while ((subscription = mqtt.readSubscription(5000))){
     //If we're in here, a subscription updated...
     if (subscription == &tvcontrol){
-      char str[50];
-      sprintf(str, "esp%c", tvcontrol.lastread);    // send command to circuit playground express
-      Serial.print(str);                        
+      char buffer[50];
+      sprintf(buffer, "esp%s", (char*)tvcontrol.lastread); 
+      Wire.beginTransmission(SLAVEADDR);
+      Wire.write(buffer);
+      Wire.endTransmission();                    
 
       //Print the new value to the serial monitor
       Serial.print("tvcontrol: ");
-      Serial.println((char*) tvcontrol.lastread);
+      Serial.println(buffer);
       //If the new value is  "ON", turn the light on.
       //Otherwise, turn it off.
       if (!strcmp((char*) tvcontrol.lastread, "on")){
@@ -79,4 +85,12 @@ void loop(){
   if (!mqtt.ping()){
     mqtt.disconnect();
   }
+
+ 
+  // Wire.beginTransmission(SLAVEADDR);
+  // Wire.write("test");
+  // int _error = Wire.endTransmission();
+  // Serial.println("_error = ");
+  // Serial.println(_error);
+  // delay(500);
 }
