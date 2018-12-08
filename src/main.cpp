@@ -1,16 +1,42 @@
+#ifndef UNIT_TEST
 #include <Arduino.h>
+#endif
 #include <ESP8266WiFi.h>
-#include <Wire.h>
+#include <IRremoteESP8266.h>
+#include <IRrecv.h>
+#include <IRsend.h>
+#include <IRutils.h>
 #include "Adafruit_MQTT.h"
 #include "Adafruit_MQTT_Client.h"
 #include "private.h"
+#include "VIZIO_IRcodes.h"
 
-#define SLAVEADDR 8               // Address of I2C Slave
+const uint16_t kRecvPin = 14;   // Pin to receive IR
+const uint16_t kIrLed = 12;      // Pin to send IR
 
+IRsend irsend(kIrLed);
+IRrecv irrecv(kRecvPin);
+decode_results results;
 WiFiClient client;
 Adafruit_MQTT_Client mqtt(&client, MQTT_SERV, MQTT_PORT, MQTT_NAME, MQTT_PASS);
 
 Adafruit_MQTT_Subscribe tvcontrol = Adafruit_MQTT_Subscribe(&mqtt, MQTT_NAME "/feeds/tvcontrol");
+Adafruit_MQTT_Subscribe tvDebug = Adafruit_MQTT_Subscribe(&mqtt, MQTT_NAME "/feeds/tvdebug");
+
+
+// char receivedChars[20];
+// const uint8_t numChars = 20;
+
+uint32_t CreateIRPacket (uint8_t irCommand){
+  uint32_t irPacket = (uint32_t)(TVIDCODE << 24) + ((~TVIDCODE & 0xFF) << 16) + (irCommand << 8) + (~irCommand & 0xFF);
+  return irPacket;
+}
+
+void sendIR (uint8_t irCommand){
+  uint32_t irPacket = CreateIRPacket(irCommand);
+  irsend.sendNEC(irPacket, 32);
+  Serial.println(irPacket ,HEX);
+}
 
 void MQTT_connect() {
   int8_t ret;
@@ -35,7 +61,8 @@ void MQTT_connect() {
 
 void setup(){
   Serial.begin(115200);
-  Wire.begin();
+  irrecv.enableIRIn();  // Start the receiver
+  irsend.begin();
 
   //Connect to WiFi
   Serial.print("\n\nConnecting Wifi...");
@@ -47,7 +74,12 @@ void setup(){
 
   Serial.println("OK!");
   mqtt.subscribe(&tvcontrol);
+  mqtt.subscribe(&tvDebug);
   pinMode(LED_BUILTIN, OUTPUT);
+
+  Serial.println();
+  Serial.print("IRrecvDemo is now running and waiting for IR message on Pin ");
+  Serial.println(kRecvPin);
 }
 
 void loop(){
@@ -61,23 +93,64 @@ void loop(){
     //If we're in here, a subscription updated...
     if (subscription == &tvcontrol){
       char buffer[50];
-      sprintf(buffer, "esp%s", (char*)tvcontrol.lastread); 
-      Wire.beginTransmission(SLAVEADDR);
-      Wire.write(buffer);
-      Wire.endTransmission();                    
+      sprintf(buffer, "%s", (char*)tvcontrol.lastread); 
 
       //Print the new value to the serial monitor
       Serial.print("tvcontrol: ");
       Serial.println(buffer);
       //If the new value is  "ON", turn the light on.
       //Otherwise, turn it off.
-      if (!strcmp((char*) tvcontrol.lastread, "on")){
+      if (strstr(buffer, "on") != NULL){
         //active low logic
         digitalWrite(LED_BUILTIN, LOW);
+        sendIR(POWERON);
+        Serial.println("On executed");
       }
-      else if (!strcmp((char*) tvcontrol.lastread, "on")){
+      else if (strstr(buffer, "off") != NULL){
         digitalWrite(LED_BUILTIN, HIGH);
+        sendIR(POWEROFF);
+        Serial.println("Off executed");
       }
+      else if (strstr(buffer, "HDMI 1") != NULL){
+        sendIR(HDMI1);
+        Serial.println("HDMI1 executed");
+      }
+      else if (strstr(buffer, "HDMI 2") != NULL){
+        sendIR(HDMI2);
+        Serial.println("HDMI2 executed");
+      }
+      else if (strstr(buffer, "HDMI 3") != NULL){
+        sendIR(HDMI3);
+        Serial.println("HDMI3 executed");
+      }
+      else if (strstr(buffer, "HDMI 4") != NULL){
+        sendIR(HDMI4);
+        Serial.println("HDMI4 executed");
+      }
+      else if (strstr(buffer, "mute") != NULL){
+        sendIR(MUTE);
+        Serial.println("MUTE executed");
+      }
+      else if (strstr(buffer, "unmute") != NULL){
+        sendIR(MUTE);
+        Serial.println("UNMUTE executed");
+      }
+      else if (strstr(buffer, "on mute") != NULL){
+        sendIR(MUTE);
+        Serial.println("MUTE executed");
+      }
+    }
+    else if (subscription == &tvDebug){
+      char buffer[50];
+      sprintf(buffer, "%s", (char*)tvDebug.lastread); 
+
+      //Print the new value to the serial monitor
+      Serial.print("tvDebug: ");
+      Serial.println(buffer);
+      unsigned int i;
+      sscanf(buffer, "%u", &i);
+      Serial.println(i, HEX);
+      sendIR(i);
     }
   }
 
@@ -86,11 +159,13 @@ void loop(){
     mqtt.disconnect();
   }
 
- 
-  // Wire.beginTransmission(SLAVEADDR);
-  // Wire.write("test");
-  // int _error = Wire.endTransmission();
-  // Serial.println("_error = ");
-  // Serial.println(_error);
-  // delay(500);
+  if (irrecv.decode(&results)) {
+    // print() & println() can't handle printing long longs. (uint64_t)
+    serialPrintUint64(results.value, HEX);
+    Serial.println("");
+    if(results.value == 0x20DF8679){
+      sendIR(INPUTNEXT);
+    }
+    irrecv.resume();  // Receive the next value
+  }
 }
