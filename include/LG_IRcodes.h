@@ -16,7 +16,7 @@ NEC IR protocol syntax is:
 #define POWERONOFF  0x10    // Remote Power button
 // #define UNKNOWN     0x11    // Does something, not sure what
 // #define MEDIARELATED 0x13   // Something to do with Media input, maybe switch to
-#define BACK        0x14    // Remote Back button
+#define BACK        0x14    // Remote Back button 
 // #define MEDIARELATE 0x15    // Something to do with the media input
 #define DIAGNOSIS   0x16    // Runs Self Diagnosis
 #define KEY8        0x18    // remote 8 button
