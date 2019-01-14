@@ -31,21 +31,29 @@
 #include <ESP8266mDNS.h>
 #include <WiFiUdp.h>
 #include <ArduinoOTA.h>
-#include <IRremoteESP8266.h>
-#include <IRrecv.h>
-#include <IRsend.h>
-#include <IRutils.h>
+#include <IRLibSendBase.h>
+#include <IRLibDecodeBase.h>
+#include <IRLib_P01_NEC.h> 
+#include <IRLib_P02_Sony.h> 
+#include <IRLibCombo.h>
+#include <IRLibRecv.h>
 #include "Adafruit_MQTT.h"
 #include "Adafruit_MQTT_Client.h"
 #include "private.h"
 #include "VIZIO_IRcodes.h"
 
-const uint16_t kRecvPin = 14;   // Pin to receive IR
-const uint16_t kIrLed = 12;      // Pin to send IR
+#define TV_PROTOCOL NECX                // Vizio TV Remote Protocol
+#define TV_BITS 32
+#define TV_INPUT 0x20DF639C             // Vizio tv switch inputs
+#define REMOTE_PROTOCOL SONY
+#define REMOTE_BIT 20
+#define REMOTE_INPUT 682823
 
-IRsend irsend(kIrLed);
-IRrecv irrecv(kRecvPin);
-decode_results results;
+IRrecv myReceiver(14);   // Pin to receive IR
+// const uint16_t kIrLed = 12;      // Pin to send IR
+
+IRsend mySender;          // might be pin 3
+IRdecode myDecoder;
 WiFiClient client;
 
 // const char MQTT_SERVER[] PROGMEM    = AIO_SERVER;
@@ -58,15 +66,24 @@ Adafruit_MQTT_Client mqtt(&client, MQTT_SERV, MQTT_PORT, MQTT_NAME, MQTT_PASS);
 Adafruit_MQTT_Subscribe tvcontrol = Adafruit_MQTT_Subscribe(&mqtt, MQTT_NAME "/feeds/tvcontrol");
 Adafruit_MQTT_Subscribe tvDebug = Adafruit_MQTT_Subscribe(&mqtt, MQTT_NAME "/feeds/tvdebug");
 
-uint32_t CreateIRPacket (uint8_t irCommand){
-  uint32_t irPacket = (uint32_t)(TVIDCODE << 24) + ((~TVIDCODE & 0xFF) << 16) + (irCommand << 8) + (~irCommand & 0xFF);
-  return irPacket;
+void CheckInput(uint8_t IR_protocol, uint32_t IR_value, uint16_t IR_bits){    // Check if Input command received
+  if(IR_protocol == REMOTE_PROTOCOL && IR_value == REMOTE_INPUT && IR_bits == REMOTE_BIT){       // Received signal from dish remote
+    mySender.send(TV_PROTOCOL,TV_INPUT,TV_BITS);
+    myReceiver.enableIRIn();    // Make sure receiver doesn't get stopped by sender
+  }
 }
 
-void sendIR (uint8_t irCommand){
-  uint32_t irPacket = CreateIRPacket(irCommand);
-  irsend.sendNEC(irPacket, 32);
-  Serial.println(irPacket, HEX);
+void CheckIR(){                                       // Decode results from IR remote
+  if(myReceiver.getResults()) { 
+    if(myDecoder.decode()) {
+      myDecoder.dumpResults(false); // print results
+      uint8_t IR_protocol = myDecoder.protocolNum;
+      uint32_t IR_value = myDecoder.value;
+      uint16_t IR_bits = myDecoder.bits;
+      CheckInput(IR_protocol, IR_value, IR_bits);   // Check if received signal for switch TV inputs
+    }
+    myReceiver.enableIRIn();      // Restart receiver
+  }
 }
 
 void MQTT_connect() {
@@ -123,8 +140,8 @@ void OTAInit(){
 void setup(){
   Serial.begin(115200);
   Serial.println(FW_VERSION);
-  irrecv.enableIRIn();  // Start the receiver
-  irsend.begin();
+  myReceiver.enableIRIn();
+  Serial.println(F("Ready to receive IR signals"));
 
   //Connect to WiFi
   Serial.print("\n\nConnecting Wifi...");
@@ -140,10 +157,6 @@ void setup(){
   mqtt.subscribe(&tvcontrol);
   mqtt.subscribe(&tvDebug);
   pinMode(LED_BUILTIN, OUTPUT);
-
-  Serial.println();
-  Serial.print("Waiting for IR message on Pin ");
-  Serial.println(kRecvPin);
 }
 
 void loop(){
@@ -225,15 +238,5 @@ void loop(){
     mqtt.disconnect();
   }
 
-  if (irrecv.decode(&results)) {
-    Serial.println("IR Received");
-    // print() & println() can't handle printing long longs. (uint64_t)
-    serialPrintUint64(results.value, HEX);
-    Serial.println("");
-    if(results.value == 0xA6B47){
-      Serial.println("IR Sent"); 
-      sendIR(INPUTNEXT);
-    }
-    irrecv.resume();  // Receive the next value
-  }
+  CheckIR();
 }
